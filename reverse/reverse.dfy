@@ -1,273 +1,220 @@
 /*
-  Challenge 1: reverse the lines of a file.
-
-  The program expects two file names. It only creates the destination file
-  when the source exists and the destination does not already exist.
-
-  In the specification a file is a sequence of bytes, so I use byte 10 as
-  the newline character.
-*/
+ * This is the skeleton for your line reverse utility.
+ *
+ */
 
 include "Io.dfy"
 
 const newline: byte := 10 as byte
 
-// Returns the index where the last line starts.
-function LastLineStart(contents: seq<byte>): nat
-  ensures LastLineStart(contents) <= |contents|
-  decreases |contents|
+// Find where the last line starts
+function lastLineStart(text: seq<byte>): nat
+    ensures lastLineStart(text) <= |text|
+    decreases |text|
 {
-  if |contents| == 0 then
-    0
-  else if contents[|contents| - 1] == newline then
-    |contents|
-  else
-    LastLineStart(contents[..|contents| - 1])
-}
-
-// Reverse the lines of a file that does not end with a final newline.
-function ReverseWithoutFinalNewline(contents: seq<byte>): seq<byte>
-  decreases |contents|
-{
-  if |contents| == 0 then
-    []
-  else
-    var lastStart := LastLineStart(contents);
-    if lastStart == 0 then
-      contents
+    if |text| == 0 then
+        0
+    else if text[|text| - 1] == newline then
+        |text|
     else
-      contents[lastStart..] + [newline] +
-        ReverseWithoutFinalNewline(contents[..lastStart - 1])
+        lastLineStart(text[..|text| - 1])
 }
 
-// If the file has a final newline, keep it at the end of the result.
-function ReverseLines(contents: seq<byte>): seq<byte>
+// Reverse the lines when the text does not end with '\n'
+function reverseNoFinalNewline(text: seq<byte>): seq<byte>
+    decreases |text|
 {
-  if |contents| > 0 && contents[|contents| - 1] == newline then
-    ReverseWithoutFinalNewline(contents[..|contents| - 1]) + [newline]
-  else
-    ReverseWithoutFinalNewline(contents)
+    if |text| == 0 then
+        []
+    else
+        var start := lastLineStart(text);
+        if start == 0 then
+            text
+        else
+            text[start..] + [newline] + reverseNoFinalNewline(text[..start - 1])
 }
 
-// Reversing lines only changes their order, not the number of bytes.
-lemma ReverseWithoutFinalNewlineKeepsLength(contents: seq<byte>)
-  ensures |ReverseWithoutFinalNewline(contents)| == |contents|
-  decreases |contents|
+function reverseLines(text: seq<byte>): seq<byte>
 {
-  if |contents| != 0 {
-    var lastStart := LastLineStart(contents);
-    if lastStart != 0 {
-      ReverseWithoutFinalNewlineKeepsLength(contents[..lastStart - 1]);
-      assert |contents[lastStart..]| == |contents| - lastStart;
-      assert |contents[..lastStart - 1]| == lastStart - 1;
+    if |text| > 0 && text[|text| - 1] == newline then
+        reverseNoFinalNewline(text[..|text| - 1]) + [newline]
+    else
+        reverseNoFinalNewline(text)
+}
+
+lemma reverseNoFinalNewlineKeepsLength(text: seq<byte>)
+    ensures |reverseNoFinalNewline(text)| == |text|
+    decreases |text|
+{
+    if |text| != 0 {
+        var start := lastLineStart(text);
+        if start != 0 {
+            reverseNoFinalNewlineKeepsLength(text[..start - 1]);
+            assert |text[start..]| == |text| - start;
+            assert |text[..start - 1]| == start - 1;
+        }
     }
-  }
 }
 
-lemma ReverseLinesKeepsLength(contents: seq<byte>)
-  ensures |ReverseLines(contents)| == |contents|
+lemma reverseLinesKeepsLength(text: seq<byte>)
+    ensures |reverseLines(text)| == |text|
 {
-  if |contents| > 0 && contents[|contents| - 1] == newline {
-    ReverseWithoutFinalNewlineKeepsLength(contents[..|contents| - 1]);
-  } else {
-    ReverseWithoutFinalNewlineKeepsLength(contents);
-  }
+    if |text| > 0 && text[|text| - 1] == newline {
+        reverseNoFinalNewlineKeepsLength(text[..|text| - 1]);
+    } else {
+        reverseNoFinalNewlineKeepsLength(text);
+    }
 }
 
-/*
-  Creates a new file and writes the whole byte sequence to it.
-
-  This keeps the file-writing proof out of Main, because the postcondition
-  of FileStream.Write is a bit detailed.
-*/
-method WriteNewFile(
-    name: array<char>,
-    contents: seq<byte>,
-    len: int32,
-    ghost env: HostEnvironment?)
-  returns (success: bool)
-
-  requires env != null && env.Valid() && env.ok.ok()
-  requires name[..] !in env.files.state()
-  requires 0 <= len as int == |contents|
-
-  modifies env.ok
-  modifies env.files
-
-  ensures env.ok.ok() == success
-  ensures success ==>
-    env.files.state() == old(env.files.state())[name[..] := contents]
+method writeNewFile(name: array<char>, content: seq<byte>, len: int32, ghost env: HostEnvironment?)
+    returns (ok: bool)
+    requires env != null && env.Valid() && env.ok.ok()
+    requires name[..] !in env.files.state()
+    requires 0 <= len as int == |content|
+    modifies env.ok
+    modifies env.files
+    ensures env.ok.ok() == ok
+    ensures ok ==> env.files.state() == old(env.files.state())[name[..] := content]
 {
-  var buffer := new byte[|contents|](i =>
-    if 0 <= i < |contents| then contents[i] else newline);
-  assert buffer[..] == contents;
+    // Convert the sequence of bytes into an array, so it can be written
+    var buffer := new byte[|content|](i =>
+        if 0 <= i < |content| then content[i] else newline);
+    assert buffer[..] == content;
 
-  ghost var filesBeforeOpen := env.files.state();
-  var openSuccess, file := FileStream.Open(name, env);
-  if !openSuccess {
-    success := false;
-    return;
-  }
+    // Create the destination file
+    ghost var beforeOpen := env.files.state();
+    var openOk, file := FileStream.Open(name, env);
+    if !openOk {
+        ok := false;
+        return;
+    }
 
-  assert env.files.state() == filesBeforeOpen[name[..] := []];
-  assert file.Name() == name[..];
+    assert env.files.state() == beforeOpen[name[..] := []];
+    assert file.Name() == name[..];
 
-  ghost var filesBeforeWrite := env.files.state();
-  assert filesBeforeWrite[name[..]] == [];
-  assert buffer[0..len as int] == contents;
+    // Write the reversed content to the empty file
+    ghost var beforeWrite := env.files.state();
+    assert beforeWrite[name[..]] == [];
+    assert buffer[0..len as int] == content;
 
-  var writeSuccess := file.Write(0 as nat32, buffer, 0 as int32, len);
-  if !writeSuccess {
-    success := false;
-    return;
-  }
+    var writeOk := file.Write(0 as nat32, buffer, 0 as int32, len);
+    if !writeOk {
+        ok := false;
+        return;
+    }
 
-  // The destination was empty and the write starts at offset 0.
-  assert filesBeforeWrite[file.Name()] == [];
-  assert filesBeforeWrite[file.Name()][..0] == [];
+    // These asserts are only to unfold the specification of Write
+    assert beforeWrite[file.Name()] == [];
+    assert beforeWrite[file.Name()][..0] == [];
+    if len as int == 0 {
+        assert beforeWrite[file.Name()][len as int..] == [];
+    } else {
+        assert len as int > |beforeWrite[file.Name()]|;
+    }
+    assert (if len as int > |beforeWrite[file.Name()]| then [] else beforeWrite[file.Name()][len as int..]) == [];
+    assert beforeWrite[file.Name()][..0] + buffer[0..len as int] +
+        (if len as int > |beforeWrite[file.Name()]| then [] else beforeWrite[file.Name()][len as int..]) == content;
+    assert env.files.state() == beforeWrite[file.Name() :=
+        beforeWrite[file.Name()][..0] + buffer[0..len as int] +
+        if len as int > |beforeWrite[file.Name()]| then [] else beforeWrite[file.Name()][len as int..]];
+    assert env.files.state() == beforeWrite[name[..] := content];
+    assert beforeWrite[name[..] := content] == beforeOpen[name[..] := content];
 
-  if len as int == 0 {
-    assert filesBeforeWrite[file.Name()][len as int..] == [];
-  } else {
-    assert len as int > |filesBeforeWrite[file.Name()]|;
-  }
-
-  assert
-    (if len as int > |filesBeforeWrite[file.Name()]|
-     then []
-     else filesBeforeWrite[file.Name()][len as int..]) == [];
-
-  assert
-    filesBeforeWrite[file.Name()][..0] +
-    buffer[0..len as int] +
-    (if len as int > |filesBeforeWrite[file.Name()]|
-     then []
-     else filesBeforeWrite[file.Name()][len as int..])
-    == contents;
-
-  assert env.files.state() ==
-    filesBeforeWrite[file.Name() :=
-      filesBeforeWrite[file.Name()][..0] +
-      buffer[0..len as int] +
-      (if len as int > |filesBeforeWrite[file.Name()]|
-       then []
-       else filesBeforeWrite[file.Name()][len as int..])];
-
-  assert env.files.state() == filesBeforeWrite[name[..] := contents];
-  assert filesBeforeWrite[name[..] := contents] ==
-    filesBeforeOpen[name[..] := contents];
-
-  var closeSuccess := file.Close();
-  if !closeSuccess {
-    success := false;
-    return;
-  }
-
-  success := true;
+    var closeOk := file.Close();
+    if !closeOk {
+        ok := false;
+        return;
+    }
+    ok := true;
 }
 
-/*
-  Main says the important property of the program:
-  when the arguments are valid, the source exists, and the destination does not,
-  the destination is created with the reversed contents of the source.
-*/
 method {:main} Main(ghost env: HostEnvironment?)
-  requires env != null && env.Valid() && env.ok.ok()
-
-  modifies env.ok
-  modifies env.files
-
-  ensures
-    env.ok.ok()
-    && |old(env.constants.CommandLineArgs())| == 3
-    && old(env.constants.CommandLineArgs())[1]
-       in old(env.files.state())
-    && old(env.constants.CommandLineArgs())[2]
-       !in old(env.files.state())
-    ==>
-      env.files.state()
-      == old(env.files.state())[
-          old(env.constants.CommandLineArgs())[2] :=
-            ReverseLines(
-              old(env.files.state())[
-                old(env.constants.CommandLineArgs())[1]])]
+    requires env != null && env.Valid() && env.ok.ok()
+    modifies env.ok
+    modifies env.files
+    ensures env.ok.ok() &&
+        |old(env.constants.CommandLineArgs())| == 3 &&
+        old(env.constants.CommandLineArgs())[1] in old(env.files.state()) &&
+        old(env.constants.CommandLineArgs())[2] !in old(env.files.state())
+        ==> env.files.state() == old(env.files.state())[
+            old(env.constants.CommandLineArgs())[2] :=
+                reverseLines(old(env.files.state())[old(env.constants.CommandLineArgs())[1]])]
 {
-  ghost var args := env.constants.CommandLineArgs();
-  ghost var initialFiles := env.files.state();
+    ghost var args := env.constants.CommandLineArgs();
+    ghost var oldFiles := env.files.state();
 
-  var argumentCount := HostConstants.NumCommandLineArgs(env);
-  if argumentCount as int != 3 {
-    print "Usage: reverse SourceFile DestinationFile\n";
-    return;
-  }
+    // Check for 3 arguments (program, source file and destination file)
+    var numArgs := HostConstants.NumCommandLineArgs(env);
+    if numArgs as int != 3 {
+        print "Wrong usage\n";
+        return;
+    }
+    assert |args| == 3;
 
-  assert |args| == 3;
+    // Get both file names
+    var source := HostConstants.GetCommandLineArg(1 as uint64, env);
+    var destination := HostConstants.GetCommandLineArg(2 as uint64, env);
+    assert source[..] == args[1];
+    assert destination[..] == args[2];
 
-  var sourceName := HostConstants.GetCommandLineArg(1 as uint64, env);
-  var destinationName := HostConstants.GetCommandLineArg(2 as uint64, env);
-  assert sourceName[..] == args[1];
-  assert destinationName[..] == args[2];
+    // Check if source exists
+    var sourceExists := FileStream.FileExists(source, env);
+    if !sourceExists {
+        print "Source file does not exist\n";
+        return;
+    }
+    assert source[..] in oldFiles;
 
-  var sourceExists := FileStream.FileExists(sourceName, env);
-  if !sourceExists {
-    print "Source file does not exist\n";
-    return;
-  }
-  assert sourceName[..] in initialFiles;
+    // Check that destination does not exist
+    var destinationExists := FileStream.FileExists(destination, env);
+    if destinationExists {
+        print "Destination file already exists\n";
+        return;
+    }
+    assert destination[..] !in oldFiles;
 
-  var destinationExists := FileStream.FileExists(destinationName, env);
-  if destinationExists {
-    print "Destination file already exists\n";
-    return;
-  }
-  assert destinationName[..] !in initialFiles;
+    // Get source file length
+    var success, len := FileStream.FileLength(source, env);
+    if !success {
+        print "Could not get file length\n";
+        return;
+    }
 
-  var lengthSuccess, sourceLength := FileStream.FileLength(sourceName, env);
-  if !lengthSuccess {
-    return;
-  }
+    // Open source file
+    var open, fileStream := FileStream.Open(source, env);
+    if !open {
+        print "Could not open file\n";
+        return;
+    }
 
-  var openSuccess, sourceFile := FileStream.Open(sourceName, env);
-  if !openSuccess {
-    return;
-  }
+    // Read file content
+    var buffer := new byte[len as int];
+    var read := fileStream.Read(0 as nat32, buffer, 0 as int32, len);
+    if !read {
+        print "Could not read file\n";
+        return;
+    }
+    assert buffer[..] == oldFiles[source[..]];
 
-  var sourceBuffer := new byte[sourceLength as int];
-  var readSuccess := sourceFile.Read(
-    0 as nat32,
-    sourceBuffer,
-    0 as int32,
-    sourceLength);
+    var close := fileStream.Close();
+    if !close {
+        print "Could not close file\n";
+        return;
+    }
 
-  if !readSuccess {
-    return;
-  }
-  assert sourceBuffer[..] == initialFiles[sourceName[..]];
+    // Reverse lines and write the destination
+    var sourceContent := buffer[..];
+    var result := reverseLines(sourceContent);
+    reverseLinesKeepsLength(sourceContent);
+    assert |result| == len as int;
 
-  var closeSuccess := sourceFile.Close();
-  if !closeSuccess {
-    return;
-  }
+    var written := writeNewFile(destination, result, len, env);
+    if !written {
+        print "Could not write destination file\n";
+        return;
+    }
 
-  var sourceContents := sourceBuffer[..];
-  var destinationContents := ReverseLines(sourceContents);
-
-  ReverseLinesKeepsLength(sourceContents);
-  assert |destinationContents| == sourceLength as int;
-
-  var writeSuccess := WriteNewFile(
-    destinationName,
-    destinationContents,
-    sourceLength,
-    env);
-
-  if !writeSuccess {
-    return;
-  }
-
-  assert initialFiles[sourceName[..]] == sourceContents;
-  assert env.files.state()
-      == initialFiles[destinationName[..] := destinationContents];
-  assert env.files.state()
-      == initialFiles[args[2] := ReverseLines(initialFiles[args[1]])];
+    assert oldFiles[source[..]] == sourceContent;
+    assert env.files.state() == oldFiles[destination[..] := result];
+    assert env.files.state() == oldFiles[args[2] := reverseLines(oldFiles[args[1]])];
 }
