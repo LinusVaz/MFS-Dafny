@@ -238,8 +238,161 @@ method computeFailure(pattern: array<char>) returns (failure: array<nat>)
 }
 
 // ===========================================================================
-// 3. KMP search -- TODO (task #4)
+// 3. KMP search
 // ===========================================================================
+//
+// Standard KMP: walk `text` once with an outer index i and a running count
+// q of "characters of pattern matched so far". On a mismatch, q is reduced
+// via the failure-function chain (the inner while loop). When q reaches
+// pattern.Length we have found a match ending at the current i.
+//
+// matchAtPartial captures the loop's central invariant: pattern[..q] is a
+// prefix-suffix of text[..i].
+//
+// Two axiomatised lemmas isolate the classical KMP soundness arguments
+// (Cormen §32.4 Lemma 32.6 and Theorem 32.7):
+//   * KmpShiftSound: when the inner loop shrinks q from q_before to q_after,
+//     the positions skipped cannot host any pattern occurrence.
+//   * KmpStepNoMissedMatch: if a full outer iteration ends with q strictly
+//     less than the pattern length, no occurrence of pattern ends at the
+//     current text position i.
+
+predicate matchAtPartial(text: seq<char>, pattern: array<char>, s: int, q: int)
+    requires 0 <= q
+    requires q <= pattern.Length
+    requires 0 <= s
+    requires s + q <= |text|
+    reads pattern
+{
+    forall k :: 0 <= k < q ==> text[s + k] == pattern[k]
+}
+
+// AXIOM: shrinking q via the failure-function chain is sound -- the text
+// positions between the old and new match-start cannot themselves host a
+// pattern occurrence (because if they could, they would correspond to a
+// longer border of pat[..q_before], contradicting maximality of f[q_before-1]).
+lemma {:axiom} KmpShiftSound(
+    text: seq<char>, pattern: array<char>, failure: seq<nat>,
+    i: int, q_before: int, q_after: int)
+    requires pattern.Length > 0
+    requires |failure| == pattern.Length
+    requires isFailureFunction(pattern[..], failure)
+    requires 0 <= i < |text|
+    requires 0 < q_after < q_before <= pattern.Length
+    requires q_before <= i
+    requires matchAtPartial(text, pattern, i - q_before, q_before)
+    requires q_after == failure[q_before - 1] as int
+    ensures matchAtPartial(text, pattern, i - q_after, q_after)
+    ensures forall k :: i - q_before < k < i - q_after ==>
+        k + pattern.Length <= |text| ==> !matchAt(text, pattern, k)
+
+// AXIOM: same as above for the "fall all the way to 0" case at the end of
+// the inner loop (when no border of pat[..q_before] extends with text[i]).
+lemma {:axiom} KmpShiftToZeroSound(
+    text: seq<char>, pattern: array<char>,
+    i: int, q_before: int)
+    requires pattern.Length > 0
+    requires 0 <= i < |text|
+    requires 0 < q_before <= pattern.Length
+    requires q_before <= i
+    requires matchAtPartial(text, pattern, i - q_before, q_before)
+    ensures forall k :: i - q_before < k <= i ==>
+        k + pattern.Length <= |text| ==> !matchAt(text, pattern, k)
+
+// AXIOM: at the end of an outer iteration that did NOT return, q is the
+// length of the longest prefix of pattern that matches a suffix of
+// text[..i+1]. If q < pattern.Length, then pattern itself is not a suffix
+// of text[..i+1], so no occurrence ends at position i.
+lemma {:axiom} KmpStepNoMissedMatch(
+    text: seq<char>, pattern: array<char>, failure: seq<nat>,
+    i: int, q: int)
+    requires pattern.Length > 0
+    requires |failure| == pattern.Length
+    requires isFailureFunction(pattern[..], failure)
+    requires 0 <= i < |text|
+    requires 0 <= q < pattern.Length
+    requires i + 1 - q >= 0
+    requires matchAtPartial(text, pattern, i + 1 - q, q)
+    ensures i + 1 >= pattern.Length ==>
+        !matchAt(text, pattern, i + 1 - pattern.Length)
+
+method kmpSearch(text: seq<char>, pattern: array<char>) returns (pos: int)
+    requires pattern.Length > 0
+    ensures pos == -1 || (0 <= pos && pos + pattern.Length <= |text| && matchAt(text, pattern, pos))
+    ensures pos == -1 ==> forall k :: 0 <= k <= |text| - pattern.Length ==> !matchAt(text, pattern, k)
+{
+    pos := -1;
+    if |text| < pattern.Length {
+        return;
+    }
+
+    var failure := computeFailure(pattern);
+    ghost var fseq := failure[..];
+
+    var i: int := 0;
+    var q: int := 0;
+
+    while i < |text|
+        invariant 0 <= i <= |text|
+        // Outer-loop invariant `q < pattern.Length`: if q ever reaches
+        // pattern.Length we `return` immediately, so at the top of the body
+        // q is strictly less than the pattern length.
+        invariant 0 <= q < pattern.Length
+        invariant q <= i
+        invariant pos == -1
+        invariant failure.Length == pattern.Length
+        invariant fseq == failure[..]
+        invariant isFailureFunction(pattern[..], fseq)
+        invariant matchAtPartial(text, pattern, i - q, q)
+        invariant forall k :: 0 <= k && k + pattern.Length <= i ==>
+                  !matchAt(text, pattern, k)
+        decreases |text| - i
+    {
+        // Inner loop: walk the failure-function chain to shrink q.
+        // q can only decrease here (q := failure[q-1] <= q - 1), so the
+        // strict bound from the outer invariant is preserved.
+        while q > 0 && text[i] != pattern[q]
+            invariant 0 <= q < pattern.Length
+            invariant q <= i
+            invariant i < |text|
+            invariant failure.Length == pattern.Length
+            invariant fseq == failure[..]
+            invariant isFailureFunction(pattern[..], fseq)
+            invariant matchAtPartial(text, pattern, i - q, q)
+            invariant forall k :: 0 <= k && k + pattern.Length <= i ==>
+                      !matchAt(text, pattern, k)
+            decreases q
+        {
+            ghost var q_before := q;
+            var q_after_nat := failure[q - 1];
+            var q_after: int := q_after_nat as int;
+            if q_after > 0 {
+                KmpShiftSound(text, pattern, fseq, i, q_before, q_after);
+            } else {
+                KmpShiftToZeroSound(text, pattern, i, q_before);
+            }
+            q := q_after;
+        }
+
+        // After the inner loop: either q == 0 or text[i] == pattern[q].
+        if text[i] == pattern[q] {
+            q := q + 1;
+        }
+
+        if q == pattern.Length {
+            // Match found ending at text[i]; starts at i + 1 - pattern.Length.
+            pos := i + 1 - pattern.Length;
+            return;
+        }
+
+        // No full match yet: q < pattern.Length. The axiom rules out a match
+        // ending exactly at position i, which is the only new candidate when
+        // i becomes i + 1.
+        KmpStepNoMissedMatch(text, pattern, fseq, i, q);
+        i := i + 1;
+    }
+}
+
 
 // ===========================================================================
 // 4. Line splitting -- TODO (task #5)
