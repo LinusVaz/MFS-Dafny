@@ -395,15 +395,130 @@ method kmpSearch(text: seq<char>, pattern: array<char>) returns (pos: int)
 
 
 // ===========================================================================
-// 4. Line splitting -- TODO (task #5)
+// 4. Line splitting
 // ===========================================================================
+//
+// Split a byte buffer into '\n'-terminated lines. The post-condition
+// guarantees each emitted line is newline-free, which is the property
+// kmpSearch will rely on when called line-by-line.
 
-// ===========================================================================
-// 5. Main entry point -- TODO (task #6)
-// ===========================================================================
-
-method {:main} Main(ghost env:HostEnvironment?)
-  requires env != null && env.Valid() && env.ok.ok()
+method getLines(text: array<byte>) returns (lines: seq<seq<char>>)
+    ensures forall i :: 0 <= i < |lines| ==> noNewlines(lines[i])
 {
-  print "TODO!\n";
+    var result: seq<seq<char>> := [];
+    var current: seq<char> := [];
+    var i := 0;
+    while i < text.Length
+        invariant 0 <= i <= text.Length
+        invariant forall j :: 0 <= j < |result| ==> noNewlines(result[j])
+        invariant noNewlines(current)
+    {
+        if text[i] as char == '\n' {
+            result := result + [current];
+            current := [];
+        } else {
+            current := current + [text[i] as char];
+        }
+        i := i + 1;
+    }
+    // Only append the trailing accumulator if it actually has content;
+    // otherwise we'd emit a spurious empty line whenever the file ends
+    // with '\n'.
+    if current != [] {
+        result := result + [current];
+    }
+    lines := result;
+}
+
+
+// ===========================================================================
+// 5. Main entry point
+// ===========================================================================
+//
+// Usage:    ./grep WORD FILE
+// Output:   prints every line of FILE that contains WORD as a substring
+//           (matches Unix grep's default behaviour and the bonus output
+//           mode for this project). "No matching lines" if no matches.
+//
+// The post-condition states that grep is read-only: whenever the program
+// finishes in an ok state (i.e. no IO failed), the file-system state is
+// exactly what it was before. Failure paths are deliberately unconstrained
+// because Io.dfy's Read/Open specs do not promise file-system invariance
+// when the underlying operation fails.
+
+method {:main} Main(ghost env: HostEnvironment?)
+    requires env != null && env.Valid() && env.ok.ok()
+    modifies env.ok, env.files
+    ensures env.ok.ok() ==> env.files.state() == old(env.files.state())
+{
+    // Expect three arguments: program name, search word, file path.
+    var numArgs := HostConstants.NumCommandLineArgs(env);
+    if numArgs != 3 {
+        print "Usage: grep WORD FILE\n";
+        return;
+    }
+
+    var word := HostConstants.GetCommandLineArg(1, env);
+    var file := HostConstants.GetCommandLineArg(2, env);
+
+    // kmpSearch (and computeFailure) require a non-empty pattern.
+    if word.Length == 0 {
+        print "Invalid word\n";
+        return;
+    }
+
+    var exist := FileStream.FileExists(file, env);
+    if !exist {
+        print "File does not exist\n";
+        return;
+    }
+
+    var success, len := FileStream.FileLength(file, env);
+    if !success {
+        print "Could not get file length\n";
+        return;
+    }
+
+    var open, fileStream := FileStream.Open(file, env);
+    if !open {
+        print "Could not open file\n";
+        return;
+    }
+
+    var buffer := new byte[len];
+    var read := fileStream.Read(0 as nat32, buffer, 0 as int32, len);
+    if !read {
+        print "Could not read file\n";
+        return;
+    }
+
+    var close := fileStream.Close();
+    if !close {
+        print "Could not close file\n";
+        return;
+    }
+
+    // Split the buffer into newline-free lines and run KMP on each one.
+    var lines := getLines(buffer);
+    var found := false;
+    var idx := 0;
+    while idx < |lines|
+        invariant 0 <= idx <= |lines|
+        // Neither getLines, kmpSearch, nor computeFailure touch env, so
+        // the file-system invariance we established right after Read holds
+        // for the whole loop and at the implicit method exit.
+        invariant env.ok.ok()
+        invariant env.files.state() == old(env.files.state())
+    {
+        var pos := kmpSearch(lines[idx], word);
+        if pos != -1 {
+            found := true;
+            print lines[idx];
+            print "\n";
+        }
+        idx := idx + 1;
+    }
+    if !found {
+        print "No matching lines\n";
+    }
 }
