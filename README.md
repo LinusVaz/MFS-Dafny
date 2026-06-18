@@ -6,7 +6,7 @@ Identify all group elements (numbers and names).
 
 - up202512128 - Giovanni Mambretti
 - up202105337 - Eduardo Machado
-- upXXXXX - Lino Vaz
+- up202108696 - Lino Vaz
 
 ## Accomplished Work
 
