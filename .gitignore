@@ -1,0 +1,23 @@
+# Dafny / .NET build artifacts
+# (matches the OUTPUT_SUFFIXES list in each folder's Makefile)
+*-cs.dtr
+*.dll
+*.deps.json
+*.runtimeconfig.json
+*.pdb
+*.csproj
+*.exe
+*.mdb
+
+# Generated C# from Dafny; keep the hand-written Native.cs files.
+*.cs
+!*Native.cs
+
+# Compiled native binaries (named after the .dfy stem)
+grep-naive/grep
+grep-kmp/grep
+reverse/reverse
+
+# .NET intermediate directories
+obj/
+bin/

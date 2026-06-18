@@ -7,6 +7,14 @@
 
 include "Io.dfy"
 
+// A line is "no-newline" if none of its characters is '\n'.
+// Used to characterise the output of getLines: each emitted line
+// cannot contain the byte we split on.
+predicate noNewlines(line: seq<char>)
+{
+    forall k :: 0 <= k < |line| ==> line[k] != '\n'
+}
+
 predicate matchAt(text: seq<char>, pattern: array<char>, i: int)
     requires 0 <= i
     requires i + pattern.Length <= |text|
@@ -47,14 +55,19 @@ method naiveSearch(text: seq<char>, pattern: array<char>) returns (pos: int)
     }
 }
 
+// Split a byte buffer into lines on the '\n' character.
+// The post-condition guarantees that every emitted line is newline-free,
+// which is exactly the property the search algorithm relies on.
 method getLines(text: array<byte>) returns (lines: seq<seq<char>>)
-    ensures forall i :: 0 <= i < |lines| ==> |lines[i]| >= 0
+    ensures forall i :: 0 <= i < |lines| ==> noNewlines(lines[i])
 {
     var result: seq<seq<char>> := [];
     var current: seq<char> := [];
     var i := 0;
     while i < text.Length
         invariant 0 <= i <= text.Length
+        invariant forall j :: 0 <= j < |result| ==> noNewlines(result[j])
+        invariant noNewlines(current)
     {
         if text[i] as char == '\n' {
             result := result + [current];
@@ -64,8 +77,11 @@ method getLines(text: array<byte>) returns (lines: seq<seq<char>>)
         }
         i := i + 1;
     }
-    // Add last line if file doesn't end with newline
-    if current  != "\n" {
+    // Add the trailing line only when it actually accumulated something.
+    // Previous version compared against "\n" (a single-char sequence) which
+    // never matches an accumulator built from non-newline characters, so an
+    // empty trailing line slipped through whenever the file ended with '\n'.
+    if current != [] {
         result := result + [current];
     }
     lines := result;

@@ -1,4 +1,5 @@
-DAFNY ?= $(HOME)/.vscode/extensions/dafny-lang.ide-vscode-3.5.4/out/resources/4.11.0/github/dafny/Dafny
+DAFNY ?= $(shell command -v dafny 2>/dev/null || \
+                 ls -1 $(HOME)/.vscode/extensions/dafny-lang.ide-vscode-*/out/resources/*/github/dafny/Dafny 2>/dev/null | tail -n1)
 OPTS ?=
 DFY ?= $(firstword $(filter-out Io.dfy,$(wildcard *.dfy)))
 STEM := $(basename $(notdir $(DFY)))
